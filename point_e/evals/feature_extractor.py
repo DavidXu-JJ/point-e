@@ -117,3 +117,55 @@ def normalize_point_clouds(pc: np.ndarray) -> np.ndarray:
     m = np.max(np.sqrt(np.sum(pc**2, axis=-1, keepdims=True)), axis=1, keepdims=True)
     pc = pc / m
     return pc
+
+class PointNetFeatureExtractor():
+    def __init__(
+        self,
+        device: Optional[Union[str, torch.device]] = None,
+        cache_dir: Optional[str] = None,
+    ):
+        state_dict = load_checkpoint("pointnet", device=torch.device("cpu"), cache_dir=cache_dir)[
+            "model_state_dict"
+        ]
+
+        self.model = get_model(num_class=40, normal_channel=False, width_mult=2)
+        self.model.load_state_dict(state_dict)
+        self.device = device
+        self.model.to(self.device)
+        self.model.eval()
+
+    @property
+    def supports_predictions(self) -> bool:
+        return True
+
+    @property
+    def feature_dim(self) -> int:
+        return 256
+
+    @property
+    def num_classes(self) -> int:
+        return 40
+
+    # input: [B, N, C]
+    def extract_features(self, points):
+        if isinstance(points, np.ndarray):
+            points = torch.from_numpy(points)
+        assert points.dim() == 3
+
+        points = normalize_point_clouds_pt(points)
+        inputs = (
+            points
+            .permute(0, 2, 1)
+            .to(dtype=self.model.sa1.mlp_convs[0].weight.dtype, device=self.device)
+        )
+        with torch.no_grad():
+            logits, _, features = self.model(inputs, features=True)
+
+        return features
+
+def normalize_point_clouds_pt(pc: torch.Tensor) -> torch.Tensor:
+    centroids = torch.mean(pc, dim=1, keepdim=True)
+    pc = pc - centroids
+    m = torch.max(torch.sqrt(torch.sum(pc**2, dim=-1, keepdim=True)), dim=1, keepdim=True)[0]
+    pc = pc / m
+    return pc
